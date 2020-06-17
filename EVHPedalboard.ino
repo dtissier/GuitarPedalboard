@@ -154,6 +154,11 @@ void SwitchPatch(int inPatch) {
       Serial.print("Dirty\n");
       break;
     }
+    case 5: {
+      Serial.print("Dirty + Delay\n");
+      led_states[delay_index] = true;
+      break;
+    }
   }
 
 //  PrintLEDStates();
@@ -213,14 +218,20 @@ void CheckSwitches() {
   }
 
   for (int index = 0; index < num_switch_pins; ++index) {
-    bool value = digitalRead(switch_pins[index]) == 1;
+    int switch_pin = switch_pins[index];   
+    bool value = digitalRead(switch_pin) == 1;
     if (switch_delay == 0) {
       int switch_state_index = index + (cur_switch_row * num_switch_pins);
       if (value != switch_states[switch_state_index]) {
+        if (value) {
+          Serial.print("\nSwitch Down: ");
+          Serial.print(switch_state_index);
+          Serial.print("\n");
+        }
         switch_delay = 300;
         switch_states[switch_state_index] = value;
         if (value) {
-          if (switch_state_index >= 0 && switch_state_index <= 4) {
+          if (switch_state_index >= 0 && switch_state_index <= 5) {
             SwitchPatch(switch_state_index);
           }
           if (switch_state_index >= 6 && switch_state_index <= 11) {
