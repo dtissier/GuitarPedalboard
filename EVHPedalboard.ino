@@ -6,8 +6,8 @@
 int led_rows[] = {24, 22};
 int led_pins[] = {26, 28, 30, 32, 34, 36};
 bool led_states[] = {
-  false, false, false, false, false, false,
-  false, false, false, false, false, false
+  false, false, false, false, false, false, // Routes
+  false, false, false, false, false, false  // Effects
 };
 int num_led_rows = 2;
 int num_led_pins = 6;
@@ -15,12 +15,12 @@ int num_leds = num_led_rows * num_led_pins;
 int cur_led_row = 0;
 int cur_led_count = 0;
 
-int index_6          = 0 + num_led_pins;
-int index_7          = 1 + num_led_pins;
-int flanger_index    = 2 + num_led_pins;
-int chorus_index     = 3 + num_led_pins;
-int delay_index      = 4 + num_led_pins;
-int boost_index      = 5 + num_led_pins;
+#define CHANNEL_3_INDEX   6
+#define PHASOR_INDEX      7
+#define FLANGER_INDEX     8
+#define CHORUS_INDEX      9
+#define DELAY_INDEX       10
+#define BOOST_INDEX       11
 
 // *********************************************************
 // Switches
@@ -38,6 +38,47 @@ int cur_switch_count = 0;
 int switch_delay = 0;
 
 // *********************************************************
+// Routes
+// *********************************************************
+
+bool effect_routes[6][6] = { 
+  // CH3      PHASOR    FLAGNER   CHORUS    DELAY   BOOST
+  {  false,   false,    false,    false,    false,  false}, // ROUTE 1, CH1
+  {  false,   false,    false,    true,     false,  false}, // ROUTE 2, CH1 + CHORUS
+  {  false,   false,    false,    false,    false,  false}, // ROUTE 3, CH2
+  {  false,   false,    false,    true,     false,  false}, // ROUTE 4, CH2 + CHORUS
+  {  false,   false,    false,    false,    true,   false}, // ROUTE 5, CH2 + DELAY
+  {  false,   false,    false,    false,    true,   true},  // ROUTE 6, SOLO - CH2 + BOOST + DELAY
+};
+
+//                            CH1    CH1    CH2    CH2    CH2    SOLO
+int  base_channels[6]     =  {0,     0,     1,     1,     1,     1   };
+int  current_route        = 2;
+
+// *********************************************************
+// MIDI
+// *********************************************************
+int evh_prog_chng           = 0xC1;
+int eleven_rack_cntrl_chng  = 0xB0;
+
+// *********************************************************
+// ROUTINE: SendMIDI
+// *********************************************************
+void SendControlChange(int inCommand, int inControl, int inValue) {
+  Serial1.write(inCommand);
+  Serial1.write(inControl);
+  Serial1.write(inValue);
+}
+
+// *********************************************************
+// ROUTINE: SendMIDI
+// *********************************************************
+void SendProgramChange(int inCommand, int inValue) {
+  Serial1.write(inCommand);
+  Serial1.write(inValue);
+}
+
+// *********************************************************
 // ROUTINE: PrintLEDStates
 // *********************************************************
 void PrintLEDStates() {
@@ -49,40 +90,6 @@ void PrintLEDStates() {
     Serial.print(led_states[index]);
     Serial.print("\n");
   }
-}
-
-// *********************************************************
-// ROUTINE: SendEffect
-// *********************************************************
-void SendEffect(int inEffect) {
-  switch (inEffect) {
-    case 6: {
-      Serial.print("6: ");
-      break;
-    }
-    case 7: {
-      Serial.print("7: ");
-      break;
-    }
-    case 8: {
-      Serial.print("Flanger: ");
-      break;
-    }
-    case 9: {
-      Serial.print("Chorus: ");
-      break;
-    }
-    case 10: {
-      Serial.print("Delay: ");
-      break;
-    }
-    case 11: {
-      Serial.print("Boost: ");
-      break;
-    }
-  }
-  Serial.print(led_states[inEffect]);
-  Serial.print("\n");
 }
 
 // *********************************************************
@@ -121,49 +128,71 @@ void UpdateLEDs() {
 }
 
 // *********************************************************
-// ROUTINE: SwitchPatch
+// ROUTINE: UpdateRouteChannel
 // *********************************************************
-void SwitchPatch(int inPatch) {
-  for (int index = 0; index < num_leds; ++index) {
-    led_states[index] = false;
+void UpdateRouteChannel() {
+  // Send the channel
+  int channel_num = base_channels[current_route];
+  if (effect_routes[current_route][0]) {
+    channel_num = 2;
+  }
+  SendProgramChange(evh_prog_chng , channel_num);
+
+  // Update the Route LEDs
+  for (int route = 0; route < 6; ++route) {
+    led_states[route] = (route == current_route);
+  }
+  led_states[CHANNEL_3_INDEX] = effect_routes[current_route][0];
+}
+
+// *********************************************************
+// ROUTINE: SendEffect
+// *********************************************************
+void UpdateEffect(int inEffect) {
+  int control = -1;
+  int route_offset = inEffect - 6;
+  switch (inEffect) {
+    case CHANNEL_3_INDEX: {
+      UpdateRouteChannel();
+      return;
+    }
+    case PHASOR_INDEX: {
+      Serial.print("Phasor: ");
+      control = 63;
+      break;
+    }
+    case FLANGER_INDEX: {
+      Serial.print("Flanger: ");
+      control = 86;
+      break;
+    }
+    case CHORUS_INDEX: {
+      Serial.print("Chorus: ");
+      control = 50;
+      break;
+    }
+    case DELAY_INDEX: {
+      Serial.print("Delay: ");
+      control = 28;
+      break;
+    }
+    case BOOST_INDEX: {
+      Serial.print("Boost: ");
+      control = 25;
+      break;
+    }
   }
 
-  led_states[inPatch] = true;
+  if (control >= 0) {
+    int value = 0;
+    led_states[inEffect] = effect_routes[current_route][route_offset];
+    if (led_states[inEffect]) {
+      value = 127;
+    }
+    SendControlChange(eleven_rack_cntrl_chng, control, value);
 
-  Serial.print("\n");
-  switch (inPatch) {
-    case 0: {
-      Serial.print("Clean\n");
-      break;
-    }
-    case 1: {
-      Serial.print("Clean + Chorus\n");
-      led_states[chorus_index] = true;
-      break;
-    }
-    case 2: {
-      Serial.print("Crunch\n");
-      break;
-    }
-    case 3: {
-      Serial.print("Crunch + Chorus\n");
-      led_states[chorus_index] = true;
-      break;
-    }
-    case 4: {
-      Serial.print("Dirty\n");
-      break;
-    }
-    case 5: {
-      Serial.print("Dirty + Delay\n");
-      led_states[delay_index] = true;
-      break;
-    }
-  }
-
-//  PrintLEDStates();
-  for (int index = 0; index < num_led_pins; ++index) {
-    SendEffect(index + num_led_pins);
+    Serial.print(led_states[inEffect]);
+    Serial.print("\n");
   }
 }
 
@@ -171,36 +200,32 @@ void SwitchPatch(int inPatch) {
 // ROUTINE: ToggleEffect
 // *********************************************************
 void ToggleEffect(int inEffect) {
-//  switch (inEffect) {
-//    case 6: {
-//      Serial.print("Toggle 6\n");
-//      break;
-//    }
-//    case 7: {
-//      Serial.print("Toggle 7\n");
-//      break;
-//    }
-//    case 8: {
-//      Serial.print("Toggle Flanger\n");
-//      break;
-//    }
-//    case 9: {
-//      Serial.print("Toggle Chorus\n");
-//      break;
-//    }
-//    case 10: {
-//      Serial.print("Toggle Delay\n");
-//      break;
-//    }
-//    case 11: {
-//      Serial.print("Toggle Boost\n");
-//      break;
-//    }
-//  }
+  int route_offset = inEffect - 6;
+  effect_routes[current_route][route_offset] = !effect_routes[current_route][route_offset];
+  UpdateEffect(inEffect);
+}
 
-  Serial.print("\nToggle ");
-  led_states[inEffect] = !led_states[inEffect];
-  SendEffect(inEffect);
+// *********************************************************
+// ROUTINE: UpdateRoute
+// *********************************************************
+void UpdateRoute() {
+  // Send the channel
+  UpdateRouteChannel();
+
+  // Update the effects
+  UpdateEffect(PHASOR_INDEX);
+  UpdateEffect(FLANGER_INDEX);
+  UpdateEffect(CHORUS_INDEX);
+  UpdateEffect(DELAY_INDEX);
+  UpdateEffect(BOOST_INDEX);
+}
+
+// *********************************************************
+// ROUTINE: SwitchRoute
+// *********************************************************
+void SwitchRoute(int inRoute) {
+  current_route = inRoute;
+  UpdateRoute();
 }
 
 // *********************************************************
@@ -232,7 +257,7 @@ void CheckSwitches() {
         switch_states[switch_state_index] = value;
         if (value) {
           if (switch_state_index >= 0 && switch_state_index <= 5) {
-            SwitchPatch(switch_state_index);
+            SwitchRoute(switch_state_index);
           }
           if (switch_state_index >= 6 && switch_state_index <= 11) {
             ToggleEffect(switch_state_index);
@@ -258,6 +283,7 @@ void CheckSwitches() {
 // *********************************************************
 void setup() {
   Serial.begin(9600);
+  Serial1.begin(31250);
 
   for (int index = 0; index < num_led_rows; ++index) {
     int led_row_pin = led_rows[index];
@@ -278,6 +304,8 @@ void setup() {
     int switch_pin = switch_pins[index];
     pinMode(switch_pin, INPUT);
   }
+
+  UpdateRoute();
 }
 
 // *********************************************************
