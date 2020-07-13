@@ -22,6 +22,8 @@ int cur_led_count = 0;
 #define DELAY_INDEX       10
 #define BOOST_INDEX       11
 
+#define BLINK_COUNT       3000
+
 // *********************************************************
 // Switches
 // *********************************************************
@@ -54,6 +56,9 @@ bool effect_routes[6][6] = {
 //                            CH1    CH1    CH2    CH2    CH2    SOLO
 int  base_channels[6]     =  {0,     0,     1,     1,     1,     1   };
 int  current_route        = 2;
+bool editing_routes       = false;
+int  original_route       = 2;
+int  blink_count          = 0;
 
 // *********************************************************
 // MIDI
@@ -65,17 +70,21 @@ int eleven_rack_cntrl_chng  = 0xB0;
 // ROUTINE: SendMIDI
 // *********************************************************
 void SendControlChange(int inCommand, int inControl, int inValue) {
-  Serial1.write(inCommand);
-  Serial1.write(inControl);
-  Serial1.write(inValue);
+  if (!editing_routes) {
+    Serial1.write(inCommand);
+    Serial1.write(inControl);
+    Serial1.write(inValue);
+  }
 }
 
 // *********************************************************
 // ROUTINE: SendMIDI
 // *********************************************************
 void SendProgramChange(int inCommand, int inValue) {
-  Serial1.write(inCommand);
-  Serial1.write(inValue);
+  if (!editing_routes) {
+    Serial1.write(inCommand);
+    Serial1.write(inValue);
+  }
 }
 
 // *********************************************************
@@ -96,6 +105,17 @@ void PrintLEDStates() {
 // ROUTINE: UpdateLEDs
 // *********************************************************
 void UpdateLEDs() {
+  bool blink_off = false;
+  if (editing_routes) {
+    blink_count++;
+    if (blink_count > (2*BLINK_COUNT)) {
+      blink_count = 0;
+    }
+    else if (blink_count > BLINK_COUNT)  {
+      blink_off = true;
+    }
+  }
+
   for (int index = 0; index < num_led_rows; ++index) {
     int led_row_pin = led_rows[index];
     if (index == cur_led_row) {
@@ -113,9 +133,14 @@ void UpdateLEDs() {
   for (int index = 0; index < num_led_pins; ++index) {
     int led_pin = led_pins[index];
     int led_state_index = index + (cur_led_row * num_led_pins);
-    int led_state = HIGH;
-    if (led_states[led_state_index]) {
-      led_state = LOW;
+    bool is_on = led_states[led_state_index];
+    if (editing_routes && cur_led_row == 1 && index == (PHASOR_INDEX - 6)) {
+      is_on = true;
+    }
+
+    int led_state = HIGH; // LED OFF
+    if (is_on && !blink_off) {
+      led_state = LOW; // LED ON
     }
     digitalWrite(led_pin, led_state);
   }
@@ -200,9 +225,22 @@ void UpdateEffect(int inEffect) {
 // ROUTINE: ToggleEffect
 // *********************************************************
 void ToggleEffect(int inEffect) {
-  int route_offset = inEffect - 6;
-  effect_routes[current_route][route_offset] = !effect_routes[current_route][route_offset];
-  UpdateEffect(inEffect);
+  if (inEffect == PHASOR_INDEX) {
+    if (editing_routes) {
+      current_route = original_route;
+      UpdateRoute();
+      editing_routes = false;
+    }
+    else {
+      original_route = current_route;
+      editing_routes = true;
+    }
+  }
+  else {
+    int route_offset = inEffect - 6;
+    effect_routes[current_route][route_offset] = !effect_routes[current_route][route_offset];
+    UpdateEffect(inEffect);
+  }
 }
 
 // *********************************************************
@@ -231,7 +269,7 @@ void SwitchRoute(int inRoute) {
 // *********************************************************
 // ROUTINE: CheckSwitches
 // *********************************************************
-void CheckSwitches() {
+void CheckSwitches() {  
   for (int index = 0; index < num_switch_rows; ++index) {
     int switch_row_pin = switch_rows[index];
     if (index == cur_switch_row) {
