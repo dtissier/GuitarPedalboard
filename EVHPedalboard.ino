@@ -1,4 +1,7 @@
+#include <Wire.h>
+#include "Adafruit_VL6180X.h"
 
+Adafruit_VL6180X vl = Adafruit_VL6180X();
 
 // *********************************************************
 // LEDs
@@ -149,6 +152,17 @@ void UpdateLEDs() {
   if (cur_led_count > 150) {
     cur_led_count = 0;
     cur_led_row = (cur_led_row + 1) % num_led_rows;  
+  }
+}
+
+// *********************************************************
+// ROUTINE: TurnLEDsOff
+// *********************************************************
+void TurnLEDsOff() {
+  for (int index = 0; index < num_led_pins; ++index) {
+    int led_pin = led_pins[index];
+    int led_state = HIGH; // LED OFF
+    digitalWrite(led_pin, led_state);
   }
 }
 
@@ -316,11 +330,134 @@ void CheckSwitches() {
   }
 }
 
+#define HYSTER_RANGE   4
+#define MIN_EXPRESSION 24
+#define MAX_EXPRESSION 40
+
+const int expression_table[] =  {
+  127, // 24
+  116, // 25
+  104, // 26
+  92,  // 27
+  80,  // 28
+  68,  // 29
+  56,  // 30
+  44,  // 31
+  
+  32,  // 32 - Low volume
+  27,  // 33
+  22,  // 34
+  17,  // 35
+  12,  // 36
+  7,   // 37
+  3,   // 38
+  1,   // 39
+  0    // 40
+};
+
+int  expression_check = 0;
+int  latest_value = -100;
+bool going_up = false;
+int  midi_value = 0;
+int  sent_midi_value = -1;
+int  sent_inc_amount = 15;
+float value_range = (MAX_EXPRESSION - MIN_EXPRESSION);
+bool  updating_expression_pedal = false;
+
+// *********************************************************
+// ROUTINE: UpdateSentExpressionValue
+// *********************************************************
+void UpdateSentExpressionValue() {  
+  if (sent_midi_value != midi_value)  {  
+    updating_expression_pedal = true;
+    
+    if (sent_midi_value == -1) { 
+      sent_midi_value = midi_value;  
+    }
+    else if (sent_midi_value < midi_value) {
+      sent_midi_value += sent_inc_amount;
+      if (sent_midi_value > midi_value) {
+        sent_midi_value = midi_value;
+        updating_expression_pedal = false;
+      }
+    }
+    else if (sent_midi_value > midi_value) {
+      sent_midi_value -= sent_inc_amount;
+      if (sent_midi_value < midi_value) {
+        sent_midi_value = midi_value;
+        updating_expression_pedal = false;
+      }
+    }
+    
+    SendControlChange(eleven_rack_cntrl_chng, 7, sent_midi_value);
+  }
+  else {
+    updating_expression_pedal = false;
+  }
+}
+
+// *********************************************************
+// ROUTINE: CheckExpression
+// *********************************************************
+void CheckExpression() {  
+  expression_check++;
+  if (expression_check > 1000 || updating_expression_pedal) {
+    expression_check = 0;
+    
+    uint8_t new_value = vl.readRange();
+    uint8_t status = vl.readRangeStatus();
+    if (status == VL6180X_ERROR_NONE) {
+      bool handle_value = false;
+      if (going_up) {
+        if (new_value > latest_value) {
+          handle_value = true;
+        }
+        else if (new_value < (latest_value - HYSTER_RANGE)) {
+          handle_value = true;
+          going_up = false;
+        }
+      }
+      else { 
+        if (new_value < latest_value) {
+          handle_value = true;
+        }
+        else if (new_value > (latest_value + HYSTER_RANGE)) {
+          handle_value = true;
+          going_up = true;
+        }
+      }
+      
+      if (handle_value) {
+        if (latest_value != new_value) {
+          latest_value = new_value;
+          int value_offset = latest_value;
+          if (value_offset < MIN_EXPRESSION) {
+            value_offset = MIN_EXPRESSION;
+          }
+          else if (value_offset > MAX_EXPRESSION) {
+            value_offset = MAX_EXPRESSION;
+          }
+          value_offset -= MIN_EXPRESSION;
+          midi_value = expression_table[value_offset];
+        }
+
+//         Serial.print("new_value: "); 
+//         Serial.println(new_value);
+//         Serial.print("midi_value: "); 
+//         Serial.println(midi_value);
+      }
+
+      UpdateSentExpressionValue();
+    }
+  }
+
+}
+
 // *********************************************************
 // ROUTINE: setup
 // *********************************************************
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial1.begin(31250);
 
   for (int index = 0; index < num_led_rows; ++index) {
@@ -343,15 +480,28 @@ void setup() {
     pinMode(switch_pin, INPUT);
   }
 
+  if (!vl.begin()) {
+    Serial.println("Failed to find sensor");
+    while (1);
+  }
+
+
   UpdateRoute();
 }
+
+int volume_check = 0;
 
 // *********************************************************
 // ROUTINE: loop
 // *********************************************************
 void loop() {
-//  Serial.print("There\n");
-  UpdateLEDs();
-  CheckSwitches();
-//  delay(500);
+  if (updating_expression_pedal) {
+    TurnLEDsOff();
+  }
+  else {
+    UpdateLEDs();
+    CheckSwitches();
+  }
+  
+  CheckExpression();
 }
