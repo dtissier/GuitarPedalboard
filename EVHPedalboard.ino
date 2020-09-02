@@ -1,7 +1,3 @@
-#include <Wire.h>
-#include "Adafruit_VL6180X.h"
-
-Adafruit_VL6180X vl = Adafruit_VL6180X();
 
 // *********************************************************
 // LEDs
@@ -94,14 +90,14 @@ void SendProgramChange(int inCommand, int inValue) {
 // ROUTINE: PrintLEDStates
 // *********************************************************
 void PrintLEDStates() {
-  Serial.print("LED States:\n");
-  for (int index = 0; index < num_leds; ++index) {
-    Serial.print("  led[");
-    Serial.print(index);
-    Serial.print("] = ");
-    Serial.print(led_states[index]);
-    Serial.print("\n");
-  }
+//  Serial.print("LED States:\n");
+//  for (int index = 0; index < num_leds; ++index) {
+//    Serial.print("  led[");
+//    Serial.print(index);
+//    Serial.print("] = ");
+//    Serial.print(led_states[index]);
+//    Serial.print("\n");
+//  }
 }
 
 // *********************************************************
@@ -196,27 +192,27 @@ void UpdateEffect(int inEffect) {
       return;
     }
     case PHASOR_INDEX: {
-      Serial.print("Phasor: ");
+//      Serial.print("Phasor: ");
       control = 63;
       break;
     }
     case FLANGER_INDEX: {
-      Serial.print("Flanger: ");
+//      Serial.print("Flanger: ");
       control = 86;
       break;
     }
     case CHORUS_INDEX: {
-      Serial.print("Chorus: ");
+//      Serial.print("Chorus: ");
       control = 50;
       break;
     }
     case DELAY_INDEX: {
-      Serial.print("Delay: ");
+//      Serial.print("Delay: ");
       control = 28;
       break;
     }
     case BOOST_INDEX: {
-      Serial.print("Boost: ");
+//      Serial.print("Boost: ");
       control = 25;
       break;
     }
@@ -230,8 +226,8 @@ void UpdateEffect(int inEffect) {
     }
     SendControlChange(eleven_rack_cntrl_chng, control, value);
 
-    Serial.print(led_states[inEffect]);
-    Serial.print("\n");
+//    Serial.print(led_states[inEffect]);
+//    Serial.print("\n");
   }
 }
 
@@ -301,9 +297,9 @@ void CheckSwitches() {
       int switch_state_index = index + (cur_switch_row * num_switch_pins);
       if (value != switch_states[switch_state_index]) {
         if (value) {
-          Serial.print("\nSwitch Down: ");
-          Serial.print(switch_state_index);
-          Serial.print("\n");
+//          Serial.print("\nSwitch Down: ");
+//          Serial.print(switch_state_index);
+//          Serial.print("\n");
         }
         switch_delay = 300;
         switch_states[switch_state_index] = value;
@@ -330,127 +326,35 @@ void CheckSwitches() {
   }
 }
 
-#define HYSTER_RANGE   4
-#define MIN_EXPRESSION 24
-#define MAX_EXPRESSION 40
+int last_midi_volume = -1;
+int vol_update_count = 0;
 
-const int expression_table[] =  {
-  127, // 24
-  116, // 25
-  104, // 26
-  92,  // 27
-  80,  // 28
-  68,  // 29
-  56,  // 30
-  44,  // 31
+// *********************************************************
+// ROUTINE
+// *********************************************************
+void CheckExpression() {
+  vol_update_count++;
+  if (vol_update_count > 20) { 
+    vol_update_count = 0;
+    
+    float ratio = 128.0/1024.0;
+    float new_value = analogRead(1) * ratio;
+    int   midi_volume = new_value;
+    if (midi_volume > 127) {
+      midi_volume = 127;
+    }
+    else if (midi_volume < 0) {
+      midi_volume = 0;
+    }
+
+    if (midi_volume != last_midi_volume) {
+      last_midi_volume = midi_volume;
+      SendControlChange(eleven_rack_cntrl_chng, 7, midi_volume);
+    }
   
-  32,  // 32 - Low volume
-  27,  // 33
-  22,  // 34
-  17,  // 35
-  12,  // 36
-  7,   // 37
-  3,   // 38
-  1,   // 39
-  0    // 40
-};
-
-int  expression_check = 0;
-int  latest_value = -100;
-bool going_up = false;
-int  midi_value = 0;
-int  sent_midi_value = -1;
-int  sent_inc_amount = 15;
-float value_range = (MAX_EXPRESSION - MIN_EXPRESSION);
-bool  updating_expression_pedal = false;
-
-// *********************************************************
-// ROUTINE: UpdateSentExpressionValue
-// *********************************************************
-void UpdateSentExpressionValue() {  
-  if (sent_midi_value != midi_value)  {  
-    updating_expression_pedal = true;
-    
-    if (sent_midi_value == -1) { 
-      sent_midi_value = midi_value;  
-    }
-    else if (sent_midi_value < midi_value) {
-      sent_midi_value += sent_inc_amount;
-      if (sent_midi_value > midi_value) {
-        sent_midi_value = midi_value;
-        updating_expression_pedal = false;
-      }
-    }
-    else if (sent_midi_value > midi_value) {
-      sent_midi_value -= sent_inc_amount;
-      if (sent_midi_value < midi_value) {
-        sent_midi_value = midi_value;
-        updating_expression_pedal = false;
-      }
-    }
-    
-    SendControlChange(eleven_rack_cntrl_chng, 7, sent_midi_value);
+//  Serial.print("midi_volume: "); 
+//  Serial.println(midi_volume);
   }
-  else {
-    updating_expression_pedal = false;
-  }
-}
-
-// *********************************************************
-// ROUTINE: CheckExpression
-// *********************************************************
-void CheckExpression() {  
-  expression_check++;
-  if (expression_check > 1000 || updating_expression_pedal) {
-    expression_check = 0;
-    
-    uint8_t new_value = vl.readRange();
-    uint8_t status = vl.readRangeStatus();
-    if (status == VL6180X_ERROR_NONE) {
-      bool handle_value = false;
-      if (going_up) {
-        if (new_value > latest_value) {
-          handle_value = true;
-        }
-        else if (new_value < (latest_value - HYSTER_RANGE)) {
-          handle_value = true;
-          going_up = false;
-        }
-      }
-      else { 
-        if (new_value < latest_value) {
-          handle_value = true;
-        }
-        else if (new_value > (latest_value + HYSTER_RANGE)) {
-          handle_value = true;
-          going_up = true;
-        }
-      }
-      
-      if (handle_value) {
-        if (latest_value != new_value) {
-          latest_value = new_value;
-          int value_offset = latest_value;
-          if (value_offset < MIN_EXPRESSION) {
-            value_offset = MIN_EXPRESSION;
-          }
-          else if (value_offset > MAX_EXPRESSION) {
-            value_offset = MAX_EXPRESSION;
-          }
-          value_offset -= MIN_EXPRESSION;
-          midi_value = expression_table[value_offset];
-        }
-
-//         Serial.print("new_value: "); 
-//         Serial.println(new_value);
-//         Serial.print("midi_value: "); 
-//         Serial.println(midi_value);
-      }
-
-      UpdateSentExpressionValue();
-    }
-  }
-
 }
 
 // *********************************************************
@@ -480,28 +384,15 @@ void setup() {
     pinMode(switch_pin, INPUT);
   }
 
-  if (!vl.begin()) {
-    Serial.println("Failed to find sensor");
-    while (1);
-  }
-
-
   UpdateRoute();
 }
-
-int volume_check = 0;
 
 // *********************************************************
 // ROUTINE: loop
 // *********************************************************
 void loop() {
-  if (updating_expression_pedal) {
-    TurnLEDsOff();
-  }
-  else {
-    UpdateLEDs();
-    CheckSwitches();
-  }
-  
+ 
+  UpdateLEDs();
+  CheckSwitches();
   CheckExpression();
 }
