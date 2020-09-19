@@ -545,10 +545,10 @@ void CheckNewSwitches() {
           else if (last_switch == WAH_SWITCH_INDEX) {
             ToggleWah();
           }
-          if (last_switch == PROG_SWITCH_INDEX) {
+          else if (last_switch == PROG_SWITCH_INDEX) {
             ToggleProg();
           }
-          if (last_switch == TUNER_SWITCH_INDEX) {
+          else if (last_switch == TUNER_SWITCH_INDEX) {
             ToggleTuner();
           }
         }
