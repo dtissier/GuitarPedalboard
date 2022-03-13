@@ -108,6 +108,10 @@ void SendProgramChange(int inCommand, int inValue) {
   if (!IsEditing()) {
     Serial1.write(inCommand);
     Serial1.write(inValue);
+
+//    Serial.print("ProgramChange:");
+//    Serial.print(inValue);
+//    Serial.print("\n");
   }
 }
 
@@ -290,6 +294,8 @@ void UpdateRoute() {
   UpdateEffect(CHORUS_INDEX);
   UpdateEffect(DELAY_INDEX);
   UpdateEffect(BOOST_INDEX);
+  delay(10);
+  UpdateWah();
 }
 
 // *********************************************************
@@ -303,8 +309,7 @@ void SwitchRoute(int inRoute) {
 // *********************************************************
 // ROUTINE
 // *********************************************************
-void ToggleWah() {
-  effect_routes[current_route][6] = !effect_routes[current_route][6];
+void UpdateWah() {
   int value = 0;
   if (IsWahOn()) {
     value = 127;
@@ -312,6 +317,14 @@ void ToggleWah() {
   SendControlChange(eleven_rack_cntrl_chng, 4, 127);
   SendControlChange(eleven_rack_cntrl_chng, 7, 127);
   SendControlChange(eleven_rack_cntrl_chng, 43, value);
+}
+
+// *********************************************************
+// ROUTINE
+// *********************************************************
+void ToggleWah() {
+  effect_routes[current_route][6] = !effect_routes[current_route][6];
+  UpdateWah();
 }
 
 // *********************************************************
@@ -435,8 +448,9 @@ void CheckExpression() {
 #define SWITCH_ANALOG_IN  0
 #define MIDI_NOTE_OFFSET  35
 #define MAX_COUNT_TRIGGER 200
+#define BUTTON_ARRAY_SIZE 14
 
-int read_values[14] = {
+int read_values[BUTTON_ARRAY_SIZE] = {
     464,  // 
     486,  // 
     512,  // 
@@ -458,36 +472,40 @@ int read_values[14] = {
 #define WAH_SWITCH_INDEX       12
  
 // *************************************************************
-int GetArrayIndex(int inValue) {
+int GetArrayIndex(int inAnalogValue) {
   int last_value = 0;
   int index = 0;
-  while (read_values[index] != 0) {
+  for (; index < (BUTTON_ARRAY_SIZE-1); index++) {
     int cur_value = read_values[index];
     int lower_mid = (last_value + cur_value)/2;
-    if (inValue < lower_mid) {
+    if (inAnalogValue < lower_mid) {
       return index-1;
     }
     last_value = cur_value;
-    index++;
   }
   return index-1;
 }
 
-int count_array[14];
+int count_array[BUTTON_ARRAY_SIZE];
 
 // *************************************************************
 void AddArrayCount(int inIndex) {
-  count_array[inIndex]++;
+  if (inIndex >= 0 && inIndex < BUTTON_ARRAY_SIZE) {
+    count_array[inIndex]++;
+  }
 }
 
 // *************************************************************
 int GetArrayCount(int inIndex) {
-  return count_array[inIndex];
+  if (inIndex >= 0 && inIndex < BUTTON_ARRAY_SIZE) {
+    return count_array[inIndex];
+  }
+  return 0;
 }
 
 // *************************************************************
 void PrintCountArray() {
-  for (int index = 0; index < 14; ++index) {
+  for (int index = 0; index < BUTTON_ARRAY_SIZE; ++index) {
     int count = count_array[index];
     if (count > 0) {
       Serial.print("count[");
@@ -501,7 +519,7 @@ void PrintCountArray() {
 
 // *************************************************************
 void ClearCountArray() {
-  for (int index = 0; index < 14; ++index) {
+  for (int index = 0; index < BUTTON_ARRAY_SIZE; ++index) {
     count_array[index] = 0;
   }
 }
