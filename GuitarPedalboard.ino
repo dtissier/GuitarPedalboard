@@ -420,8 +420,12 @@ void CheckExpression() {
   if (vol_update_count > 20) { 
     vol_update_count = 0;
     
-    float ratio = 128.0/1024.0;
-    float new_value = analogRead(1) * ratio;
+    float ratio = 128.0/512.0;
+    int   analog_value = analogRead(1) - 512;
+    if (analog_value < 0) {
+      analog_value = 0;
+    }
+    float new_value = analog_value * ratio;
     int   midi_volume = new_value;
     if (midi_volume > 127) {
       midi_volume = 127;
@@ -438,6 +442,11 @@ void CheckExpression() {
       else {
         SendControlChange(eleven_rack_cntrl_chng, 7, midi_volume);
       }
+//      Serial.print("expression: ");
+//      Serial.print(analog_value);
+//      Serial.print(",");
+//      Serial.print(midi_volume);
+//      Serial.print("\n");
     }
   
 //  Serial.print("midi_volume: "); 
