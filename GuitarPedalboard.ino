@@ -58,16 +58,32 @@ bool effect_routes[6][7] = {
 //                            CH1    CH1    CH2    CH2    CH2    SOLO
 int  base_channels[6]     =  {0,     0,     1,     1,     1,     1   };
 int  current_route        = 2;
-bool editing_routes       = false;
-int  original_route       = 2;
+bool switching_patch      = false;
 int  blink_count          = 0;
 bool tuner_state          = false;
+
+// *********************************************************
+// BANK/PATCH
+// *********************************************************
+int  current_patch        = 0;
+int  current_bank         = 0;
+int  patches_per_bank     = 6;
 
 // *********************************************************
 // MIDI
 // *********************************************************
 int evh_prog_chng           = 0xC1;
 int eleven_rack_cntrl_chng  = 0xB0;
+int eleven_rack_prog_chng   = 0xC0;
+
+#define ELEVEN_RACK_CC_WAH                  4
+#define ELEVEN_RACK_CC_VOLUME               7
+#define ELEVEN_RACK_CC_DISTORTION_ENABLE    25
+#define ELEVEN_RACK_CC_DELAY_ENABLE         28
+#define ELEVEN_RACK_CC_WAH_ENABLE           43
+#define ELEVEN_RACK_CC_CHORUS_ENABLE        50
+#define ELEVEN_RACK_CC_FX1_ENABLE           63
+#define ELEVEN_RACK_CC_FX2_ENABLE           86
 
 // *********************************************************
 // ROUTINE
@@ -86,15 +102,15 @@ bool IsTuning() {
 // *********************************************************
 // ROUTINE
 // *********************************************************
-bool IsEditing() {
-  return editing_routes;
+bool IsSwitchingPatch() {
+  return switching_patch;
 }
 
 // *********************************************************
 // ROUTINE
 // *********************************************************
 void SendControlChange(int inCommand, int inControl, int inValue) {
-  if (!IsEditing()) {
+  if (!IsSwitchingPatch()) {
     Serial1.write(inCommand);
     Serial1.write(inControl);
     Serial1.write(inValue);
@@ -105,14 +121,12 @@ void SendControlChange(int inCommand, int inControl, int inValue) {
 // ROUTINE
 // *********************************************************
 void SendProgramChange(int inCommand, int inValue) {
-  if (!IsEditing()) {
-    Serial1.write(inCommand);
-    Serial1.write(inValue);
+  Serial1.write(inCommand);
+  Serial1.write(inValue);
 
 //    Serial.print("ProgramChange:");
 //    Serial.print(inValue);
 //    Serial.print("\n");
-  }
 }
 
 // *********************************************************
@@ -138,7 +152,7 @@ void UpdateLEDs() {
   if (IsTuning()) {
     all_on = true;
   }
-  else if (IsEditing()) {
+  else if (IsSwitchingPatch()) {
     blink_count++;
     if (blink_count > (2*BLINK_COUNT)) {
       blink_count = 0;
@@ -215,10 +229,12 @@ void UpdateRouteChannel() {
   SendProgramChange(evh_prog_chng , channel_num);
 
   // Update the Route LEDs
-  for (int route = 0; route < 6; ++route) {
-    led_states[route] = (route == current_route);
+  if (!IsSwitchingPatch()) {
+    for (int route = 0; route < 6; ++route) {
+      led_states[route] = (route == current_route);
+    }
+    led_states[CHANNEL_3_INDEX] = effect_routes[current_route][0];
   }
-  led_states[CHANNEL_3_INDEX] = effect_routes[current_route][0];
 }
 
 // *********************************************************
@@ -234,40 +250,45 @@ void UpdateEffect(int inEffect) {
     }
     case PHASOR_INDEX: {
 //      Serial.print("Phasor: ");
-      control = 63;
+      control = ELEVEN_RACK_CC_FX1_ENABLE;
       break;
     }
     case FLANGER_INDEX: {
 //      Serial.print("Flanger: ");
-      control = 86;
+      control = ELEVEN_RACK_CC_FX2_ENABLE;
       break;
     }
     case CHORUS_INDEX: {
 //      Serial.print("Chorus: ");
-      control = 50;
+      control = ELEVEN_RACK_CC_CHORUS_ENABLE;
       break;
     }
     case DELAY_INDEX: {
 //      Serial.print("Delay: ");
-      control = 28;
+      control = ELEVEN_RACK_CC_DELAY_ENABLE;
       break;
     }
     case BOOST_INDEX: {
 //      Serial.print("Boost: ");
-      control = 25;
+      control = ELEVEN_RACK_CC_DISTORTION_ENABLE;
       break;
     }
   }
 
   if (control >= 0) {
+    bool effect_state = effect_routes[current_route][route_offset];
     int value = 0;
-    led_states[inEffect] = effect_routes[current_route][route_offset];
-    if (led_states[inEffect]) {
+    if (effect_state) {
       value = 127;
     }
     SendControlChange(eleven_rack_cntrl_chng, control, value);
 
-//    Serial.print(led_states[inEffect]);
+    // Update LED state
+    if (!IsSwitchingPatch()) {
+      led_states[inEffect] = effect_state;
+    }
+
+//    Serial.print(effect_state);
 //    Serial.print("\n");
   }
 }
@@ -309,14 +330,26 @@ void SwitchRoute(int inRoute) {
 // *********************************************************
 // ROUTINE
 // *********************************************************
+void UpdateSwitchingPatch() {
+  for (int index = 0; index < num_led_pins; ++index) {
+    led_states[index] = (index == current_patch);
+  }
+  for (int index = num_led_pins; index < (2*num_led_pins); ++index) {
+    led_states[index] = ((index - num_led_pins) == current_bank);
+  }
+}
+
+// *********************************************************
+// ROUTINE
+// *********************************************************
 void UpdateWah() {
   int value = 0;
   if (IsWahOn()) {
     value = 127;
   }
-  SendControlChange(eleven_rack_cntrl_chng, 4, 127);
-  SendControlChange(eleven_rack_cntrl_chng, 7, 127);
-  SendControlChange(eleven_rack_cntrl_chng, 43, value);
+  SendControlChange(eleven_rack_cntrl_chng, ELEVEN_RACK_CC_WAH, 127);
+  SendControlChange(eleven_rack_cntrl_chng, ELEVEN_RACK_CC_VOLUME, 127);
+  SendControlChange(eleven_rack_cntrl_chng, ELEVEN_RACK_CC_WAH_ENABLE, value);
 }
 
 // *********************************************************
@@ -330,16 +363,44 @@ void ToggleWah() {
 // *********************************************************
 // ROUTINE
 // *********************************************************
-void ToggleProg() {
-  if (IsEditing()) {
-    current_route = original_route;
+void ToggleSwitchingPatch() {
+  if (IsSwitchingPatch()) {
+    switching_patch = false;
     UpdateRoute();
-    editing_routes = false;
   }
   else {
-    original_route = current_route;
-    editing_routes = true;
+    switching_patch = true;
+    UpdateSwitchingPatch();
   }
+}
+
+// *********************************************************
+// ROUTINE
+// *********************************************************
+void SendSwitchPatch() {
+  int patch = current_bank * patches_per_bank;
+  patch += current_patch;
+  SendProgramChange(eleven_rack_prog_chng, patch);
+}
+
+// *********************************************************
+// ROUTINE
+// *********************************************************
+void SwitchPatch(int inPatch) {
+  current_patch = inPatch;
+  UpdateSwitchingPatch();
+  SendSwitchPatch();
+  if (current_patch == 0 && current_bank == 0) {
+    UpdateRoute();
+  }
+}
+
+// *********************************************************
+// ROUTINE
+// *********************************************************
+void SwitchBank(int inBank) {
+  current_bank = inBank;
+  UpdateSwitchingPatch();
 }
 
 // *********************************************************
@@ -385,6 +446,14 @@ void CheckSwitches() {
           if (IsTuning()) {
             ToggleTuner();
           }
+          else if (IsSwitchingPatch()) {
+            if (switch_state_index >= 0 && switch_state_index <= 5) {
+              SwitchPatch(switch_state_index);
+            }
+            if (switch_state_index >= 6 && switch_state_index <= 11) {
+              SwitchBank(switch_state_index - 6);
+            }
+          }
           else {
             if (switch_state_index >= 0 && switch_state_index <= 5) {
               SwitchRoute(switch_state_index);
@@ -409,7 +478,7 @@ void CheckSwitches() {
   }
 }
 
-int last_midi_volume = -1;
+int last_midi_value = -1;
 int vol_update_count = 0;
 
 // *********************************************************
@@ -426,31 +495,31 @@ void CheckExpression() {
       analog_value = 0;
     }
     float new_value = analog_value * ratio;
-    int   midi_volume = new_value;
-    if (midi_volume > 127) {
-      midi_volume = 127;
+    int   midi_value = new_value;
+    if (midi_value > 127) {
+          midi_value = 127;
     }
-    else if (midi_volume < 0) {
-      midi_volume = 0;
+    else if (midi_value < 0) {
+          midi_value = 0;
     }
 
-    if (midi_volume != last_midi_volume) {
-      last_midi_volume = midi_volume;
+    if (midi_value != last_midi_value) {
+      last_midi_value = midi_value;
       if (IsWahOn()) {
-        SendControlChange(eleven_rack_cntrl_chng, 4, midi_volume);
+        SendControlChange(eleven_rack_cntrl_chng, ELEVEN_RACK_CC_WAH, midi_value);
       }
       else {
-        SendControlChange(eleven_rack_cntrl_chng, 7, midi_volume);
+        SendControlChange(eleven_rack_cntrl_chng, ELEVEN_RACK_CC_VOLUME, midi_value);
       }
 //      Serial.print("expression: ");
 //      Serial.print(analog_value);
 //      Serial.print(",");
-//      Serial.print(midi_volume);
+//      Serial.print(midi_value);
 //      Serial.print("\n");
     }
   
-//  Serial.print("midi_volume: "); 
-//  Serial.println(midi_volume);
+//  Serial.print("midi_value: ");
+//  Serial.println(midi_value);
   }
 }
 #define TOLERANCE_AMOUNT  5
@@ -535,7 +604,7 @@ void ClearCountArray() {
 
 int last_array_index = -1;
 int max_array_index = 0;
-int last_switch = 0;
+int active_switch = 0;
 
 // *********************************************************
 // ROUTINE
@@ -554,28 +623,28 @@ void CheckNewSwitches() {
     if (cur_array_index != last_array_index) {      
       max_array_index = -1;
       ClearCountArray();
-      last_switch = 0;
+      active_switch = 0;
     }
   }
   else {
-    if (last_switch == 0) {
+    if (active_switch == 0) {
       AddArrayCount(cur_array_index);
       int max_count = GetArrayCount(max_array_index);
       if (max_count > MAX_COUNT_TRIGGER) {
-        if (max_array_index != last_switch) {
+        if (max_array_index != active_switch) {
 //          Serial.print(max_array_index);
 //          Serial.print("\n"); 
-          last_switch = max_array_index;
+          active_switch = max_array_index;
           if (IsTuning()) {
             ToggleTuner();
           }
-          else if (last_switch == WAH_SWITCH_INDEX) {
+          else if (active_switch == WAH_SWITCH_INDEX) {
             ToggleWah();
           }
-          else if (last_switch == PROG_SWITCH_INDEX) {
-            ToggleProg();
+          else if (active_switch == PROG_SWITCH_INDEX) {
+            ToggleSwitchingPatch();
           }
-          else if (last_switch == TUNER_SWITCH_INDEX) {
+          else if (active_switch == TUNER_SWITCH_INDEX) {
             ToggleTuner();
           }
         }
